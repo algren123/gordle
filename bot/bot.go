@@ -1,14 +1,13 @@
 package bot
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-	"regexp"
 	"strings"
 
+	"github.com/algren123/gordle/api"
 	"github.com/algren123/gordle/config"
+	"github.com/algren123/gordle/store"
+	"github.com/algren123/gordle/tools"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -16,16 +15,9 @@ var (
 	BotId string
 	goBot *discordgo.Session
 
-	g           []guess_data
 	wonArray    []string
 	botResponse string
 )
-
-type guess_data struct {
-	Slot   int    `json:"slot"`
-	Guess  string `json:"guess"`
-	Result string `json:"result"`
-}
 
 func Start() {
 	goBot, err := discordgo.New("Bot " + config.Token)
@@ -50,6 +42,9 @@ func Start() {
 		return
 	}
 
+	store.GetServerByID = make(map[string]*store.ServerConfig)
+	store.GetUserByID = make(map[string]*store.User)
+
 	fmt.Println("Bot is running :)")
 }
 
@@ -65,46 +60,65 @@ func messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		_, _ = s.ChannelMessageSend(m.ChannelID, "pong")
 	}
 
+	// Returns amount of points user has
+	if command[0] == config.BotPrefix+"points" {
+		if !store.UserExists(m.Author.ID) {
+			_, _ = s.ChannelMessageSend(m.ChannelID, "You need to at least have a guess first using the command '!guess' to be added to the database")
+			return
+		}
+
+		_, _ = s.ChannelMessageSendReply(m.ChannelID, "You have "+store.GetPoints(m.Author.ID)+" point(s)", m.Reference())
+	}
+
+	// Guess handler
 	if command[0] == config.BotPrefix+"guess" {
-		_, err := isValidGuess(command[1])
+		// Handle registering a new server to local memory
+		if !store.ServerExists(m.GuildID) {
+			newServer := store.ServerConfig{ID: m.GuildID, CanPlay: true, Tries: 6}
+			store.StoreServer(newServer)
+		}
+
+		// Handle registering new users to local memory
+		if !store.UserExists(m.Author.ID) {
+			newUser := store.User{ID: m.Author.ID, Author: m.Author.Username, Points: 0}
+			store.StoreUser(newUser)
+		}
+
+		if !store.AbleToPlay(m.GuildID) {
+			_, _ = s.ChannelMessageSend(m.ChannelID, "You cannot play yet. You have to wait until 00:00 GMT Time.")
+			return
+		}
+
+		_, err := tools.IsValidGuess(command[1])
 		if err != nil {
 			_, _ = s.ChannelMessageSend(m.ChannelID, "Guess is incorrect format. It needs to be 5 letters long.")
 			return
 		}
 
-		resp, err := http.Get("https://api-slack-wordle.herokuapp.com/daily?guess=" + command[1])
+		guessData, err := api.GetGuessData(command[1])
 		if err != nil {
-			fmt.Println("error accessing API")
+			_, _ = s.ChannelMessageSendReply(m.ChannelID, err.Error(), m.Reference())
 			return
 		}
 
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			fmt.Println("error reading response body")
-		}
-
-		err = json.Unmarshal(body, &g)
-		if err != nil {
-			fmt.Printf("error decoding guess data: %s", body)
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, "Word was not found in the database", m.Reference())
-			return
-		}
-
-		for _, letter := range g {
+		for _, letter := range guessData {
 			// Add all the correct letters in an array that checks if the user has got the correct answer
 			if letter.Result == "correct" {
 				wonArray = append(wonArray, letter.Result)
 			}
 
+			// Handle win
 			if len(wonArray) == 5 && wonArray[0] == "correct" {
 				_, _ = s.ChannelMessageSendReply(m.ChannelID, "You have completed today's Wordle! 🎉\n🟩 🟩 🟩 🟩 🟩", m.Reference())
+				store.GivePoint(m.Author.ID)
+				store.SetCanPlay(m.GuildID, false)
 				botResponse = ""
 				wonArray = nil
 				return
 			}
 
 			// Format the answer
-			botResponse += formatResponse(letter.Result) + " "
+			botResponse += tools.FormatResponse(letter.Result) + " "
 		}
 
 		_, err = s.ChannelMessageSendReply(m.ChannelID, botResponse, m.Reference())
@@ -112,34 +126,14 @@ func messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			fmt.Println(err)
 		}
 
-		// Reset the response
+		store.SubtractServerTry(m.GuildID)
+
+		if store.GetServerTries(m.GuildID) < 1 {
+			store.SetCanPlay(m.GuildID, false)
+		}
+
+		// Reset params
 		botResponse = ""
 		wonArray = nil
 	}
-}
-
-func isValidGuess(g string) (bool, error) {
-	r, _ := regexp.Compile(`^[A-Za-z]+$`)
-
-	if len(g) != 5 || !r.MatchString(g) {
-		return false, fmt.Errorf("incorrect format")
-	}
-
-	return true, nil
-}
-
-func formatResponse(result string) string {
-	if result == "correct" {
-		return "🟩"
-	}
-
-	if result == "present" {
-		return "🟧"
-	}
-
-	if result == "absent" {
-		return "⬛"
-	}
-
-	return result
 }
