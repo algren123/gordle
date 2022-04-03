@@ -85,7 +85,9 @@ func messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		err = json.Unmarshal(body, &g)
 		if err != nil {
-			fmt.Println("error decoding guess data")
+			fmt.Printf("error decoding guess data: %s", body)
+			_, _ = s.ChannelMessageSendReply(m.ChannelID, "Word was not found in the database", m.Reference())
+			return
 		}
 
 		for _, letter := range g {
@@ -112,6 +114,7 @@ func messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		// Reset the response
 		botResponse = ""
+		wonArray = nil
 	}
 }
 
