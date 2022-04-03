@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 type User struct {
@@ -19,9 +20,21 @@ type ServerConfig struct {
 
 var (
 	GetUserByID   map[string]*User
-	GetAllUsers   map[string]*User
 	GetServerByID map[string]*ServerConfig
 )
+
+func InitTime(ID string) {
+	for range time.Tick(1 * time.Minute) {
+		CheckMidnight(ID)
+	}
+}
+
+func CheckMidnight(ID string) {
+	currentTime := time.Now()
+	if currentTime.Hour() == 0 && currentTime.Minute() == 0 {
+		ResetServer(ID)
+	}
+}
 
 func StoreServer(server ServerConfig) {
 	GetServerByID[server.ID] = &server

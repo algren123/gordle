@@ -84,8 +84,10 @@ func messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			store.StoreUser(newUser)
 		}
 
+		go store.InitTime(m.GuildID)
+
 		if !store.AbleToPlay(m.GuildID) {
-			_, _ = s.ChannelMessageSend(m.ChannelID, "You cannot play yet. You have to wait until 00:00 GMT Time.")
+			_, _ = s.ChannelMessageSend(m.ChannelID, "You ran out of tries or have already solved today's Gordle. You have to wait until 00:00 GMT Time.")
 			return
 		}
 
